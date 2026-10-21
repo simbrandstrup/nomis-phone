@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Nomis">
+<meta name="theme-color" content="#faf9f6" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#17181b" media="(prefers-color-scheme: dark)">
+<title>Nomis</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap">
+<style>
+/* Nomis on the iPhone: pick today's meeting, record, and the recording goes to OneDrive/Nomis/Inbox for Nomis on the Mac.
+   Tokens follow context/design-guide.md. */
+:root {
+  --canvas: #faf9f6; --surface: #ffffff; --surface-muted: #f4f6fc; --ink: #242424; --ink-muted: #7a7972; --line: #e9e7e1;
+  --accent: #5276e8; --accent-soft: #eef3ff; --danger: #ba3b35; --danger-soft: #fbeceb; --rec: #e5392f; --ok: #2f8f5b;
+  --text-xs: 12px; --text-sm: 14px; --text-md: 16px; --text-lg: 20px; --text-xl: 30px;
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-5: 24px; --space-6: 32px;
+  --radius-control: 8px; --radius-field: 12px;
+  --font: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark) { :root {
+  --canvas: #17181b; --surface: #1f2024; --surface-muted: #262935; --ink: #ecebe7; --ink-muted: #a3a29b; --line: #33343a;
+  --accent: #7d97f0; --accent-soft: #272f4a; --danger: #e8736c; --danger-soft: #3a2223; --rec: #ff453a; --ok: #4fb37d; color-scheme: dark } }
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--canvas); color: var(--ink); font: 400 var(--text-md)/24px var(--font); -webkit-text-size-adjust: 100%;
+  padding: max(var(--space-4), env(safe-area-inset-top)) max(var(--space-4), env(safe-area-inset-right)) max(var(--space-4), env(safe-area-inset-bottom)) max(var(--space-4), env(safe-area-inset-left)); }
+main { max-width: 480px; margin: 0 auto; min-height: 100%; display: flex; flex-direction: column; gap: var(--space-4); }
+h1 { font-size: var(--text-lg); line-height: 28px; font-weight: 600; margin: 0; }
+.meta { font-size: var(--text-xs); line-height: 16px; color: var(--ink-muted); }
+.muted { color: var(--ink-muted); }
+.top { display: flex; justify-content: space-between; align-items: baseline; gap: var(--space-3); }
+button { font: inherit; color: inherit; cursor: pointer; }
+.btn { min-height: 44px; padding: 0 var(--space-4); border-radius: var(--radius-control); border: 1px solid var(--line); background: var(--surface); font-weight: 500; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.quiet { border-color: transparent; background: transparent; color: var(--accent); padding: 0 var(--space-2); }
+button:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 40%, transparent); }
+.list { display: flex; flex-direction: column; gap: var(--space-2); }
+.meeting { text-align: left; border: 2px solid transparent; background: var(--surface); border-radius: var(--radius-field); padding: var(--space-2) var(--space-3); min-height: 56px; display: flex; flex-direction: column; justify-content: center; }
+.meeting[aria-checked="true"] { border-color: var(--accent); }
+.meeting b { font-weight: 600; }
+.bottom { margin-top: auto; display: flex; flex-direction: column; align-items: center; gap: var(--space-2); text-align: center; padding-top: var(--space-4); }
+.rec { width: 88px; height: 88px; border-radius: 50%; border: 4px solid var(--ink); background: transparent; padding: 0; display: grid; place-items: center; }
+.rec span { width: 68px; height: 68px; border-radius: 50%; background: var(--rec); transition: all .18s; }
+.rec.stop span { width: 34px; height: 34px; border-radius: 8px; }
+.rec-label { font-weight: 600; }
+.time { font-size: var(--text-xl); line-height: 36px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--rec); margin-right: var(--space-2); animation: pulse 1.2s infinite; }
+@keyframes pulse { 50% { opacity: .3; } }
+@media (prefers-reduced-motion: reduce) { .dot { animation: none; } .rec span { transition: none; } }
+.note { background: var(--surface-muted); border-radius: var(--radius-field); padding: var(--space-3) var(--space-4); font-size: var(--text-sm); line-height: 20px; }
+.note.fail { background: var(--danger-soft); }
+.note.fail strong { color: var(--danger); }
+.note strong { font-weight: 600; }
+.check { width: 64px; height: 64px; border-radius: 50%; background: var(--ok); color: #fff; display: grid; place-items: center; font-size: var(--text-xl); }
+.center { margin: auto 0; display: flex; flex-direction: column; align-items: center; gap: var(--space-3); text-align: center; }
+</style>
+</head>
+<body>
+<main id="app"><p class="muted">Loading…</p></main>
+<script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@3.28.1/lib/msal-browser.min.js"></script>
+<script>
+// The Nomis OS Microsoft app (public metadata, see context/decisions.md 2026-10-08). Delegated, only as Simon:
+// Calendars.Read lists today's meetings, Files.ReadWrite saves the recording to OneDrive. Nothing else is read or written.
+const CONFIG = { clientId: "afa1a9be-ce96-4ee0-8c45-5d2b8cfeb0e7", tenant: "nomisworks.com" };
+const SCOPES = ["Calendars.Read", "Files.ReadWrite"];
+const INBOX = "Nomis/Inbox";
+const NONE = "Not in my calendar";
+const GRAPH = "https://graph.microsoft.com/v1.0";
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const pad = n => String(n).padStart(2, "0");
+const hm = d => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+const fmt = s => `${Math.floor(s / 60)}:${pad(s % 60)}`;
+
+const S = { view: "loading", account: null, meetings: [], pick: null, error: "", rec: null, secs: 0, last: null, queue: [] };
+
+/* ---------- Sign-in ---------- */
+let msalApp;
+async function initAuth() {
+  msalApp = new msal.PublicClientApplication({
+    auth: { clientId: CONFIG.clientId, authority: `https://login.microsoftonline.com/${CONFIG.tenant}`, redirectUri: new URL("auth.html", location.href).href, navigateToLoginRequestUrl: false },
+    cache: { cacheLocation: "localStorage" } });
+  await msalApp.initialize();
+  const res = await msalApp.handleRedirectPromise().catch(e => { S.error = e.message; return null; });
+  S.account = res?.account || msalApp.getAllAccounts()[0] || null;
+}
+async function token() {
+  try { return (await msalApp.acquireTokenSilent({ scopes: SCOPES, account: S.account })).accessToken; }
+  catch (e) {
+    if (e instanceof msal.InteractionRequiredAuthError) { await msalApp.acquireTokenRedirect({ scopes: SCOPES, account: S.account }); }
+    throw e;
+  }
+}
+async function graph(path, opts = {}) {
+  const res = await fetch(path.startsWith("http") ? path : GRAPH + path, { ...opts, headers: { Authorization: `Bearer ${await token()}`, ...(opts.headers || {}) } });
+  if (!res.ok) throw new Error(`Microsoft answered ${res.status}`);
+  return res.status === 204 ? null : res.json();
+}
+
+/* ---------- Today's meetings (Outlook) ---------- */
+async function loadMeetings() {
+  const start = new Date(); start.setHours(0, 0, 0, 0);
+  const end = new Date(start.getTime() + 864e5);
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const q = `/me/calendarView?startDateTime=${start.toISOString()}&endDateTime=${end.toISOString()}&$select=subject,start,end,isAllDay,isCancelled,showAs&$orderby=start/dateTime&$top=50`;
+  const data = await graph(q, { headers: { Prefer: `outlook.timezone="${tz}"` } });
+  S.meetings = (data.value || []).filter(e => !e.isAllDay && !e.isCancelled && e.showAs !== "free")
+    .map(e => ({ title: (e.subject || "Untitled").trim(), start: new Date(e.start.dateTime), end: new Date(e.end.dateTime) }));
+  S.pick = nearest();
+}
+// The meeting happening now, else the one that ended most recently (within 3 hours), else the next one today.
+function nearest() {
+  const now = Date.now(), m = S.meetings;
+  const live = m.find(x => x.start <= now && x.end >= now);
+  const ended = m.filter(x => x.end < now && now - x.end < 3 * 36e5).sort((a, b) => b.end - a.end)[0];
+  const next = m.find(x => x.start > now);
+  const hit = live || ended || next;
+  return hit ? m.indexOf(hit) : -1;
+}
+const picked = () => S.pick >= 0 ? S.meetings[S.pick] : null;
+const when = m => { const now = Date.now(); return `${hm(m.start)}–${hm(m.end)}${m.start <= now && m.end >= now ? " · now" : m.end < now ? " · ended" : ""}`; };
+
+/* ---------- Recording ---------- */
+const MIME = ["audio/mp4", "audio/mp4;codecs=mp4a.40.2", "audio/aac"].find(t => window.MediaRecorder?.isTypeSupported?.(t));
+let wake = null, tick = 0;
+async function startRecording() {
+  if (!MIME) { S.error = "This browser can't record in a format Nomis reads. Open this page in Safari on your iPhone."; return draw(); }
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+  catch { S.error = "Nomis can't use the microphone. Allow it in Settings → Safari → Microphone, then try again."; return draw(); }
+  const chunks = [], rec = new MediaRecorder(stream, { mimeType: MIME, audioBitsPerSecond: 64000 });
+  rec.ondataavailable = e => e.data.size && chunks.push(e.data);
+  rec.onstop = () => { stream.getTracks().forEach(t => t.stop()); finish(new Blob(chunks, { type: "audio/mp4" })); };
+  rec.start(1000);
+  S.rec = { rec, at: new Date(), meeting: picked() }; S.secs = 0; S.error = ""; S.view = "recording";
+  try { wake = await navigator.wakeLock?.request("screen"); } catch {}
+  tick = setInterval(() => { S.secs++; const t = $("#time"); if (t) t.textContent = fmt(S.secs); }, 1000);
+  draw();
+}
+function stopRecording() { clearInterval(tick); wake?.release?.().catch(() => {}); wake = null; S.rec?.rec.stop(); }
+// "2026-10-21 14.05 Kaffe m. Anna.m4a": the Mac reads the time and the meeting from the name (lib/debrief.js).
+function fileName(at, meeting) {
+  const d = `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())} ${pad(at.getHours())}.${pad(at.getMinutes())}`;
+  const t = (meeting?.title || NONE).replace(/[\\/:*?"<>|#%\u0000-\u001f]/g, "-").replace(/\s+/g, " ").trim().slice(0, 100);
+  return `${d} ${t}.m4a`;
+}
+async function finish(blob) {
+  const item = { id: Date.now(), name: fileName(S.rec.at, S.rec.meeting), blob, secs: S.secs, title: S.rec.meeting?.title || NONE };
+  S.rec = null;
+  await queuePut(item);            // kept on the phone until OneDrive has it
+  S.last = item; S.view = "sending"; draw();
+  await sendQueue();
+}
+
+/* ---------- Upload queue (IndexedDB, so nothing is lost offline) ---------- */
+const idb = () => new Promise((ok, fail) => { const r = indexedDB.open("nomis-phone", 1); r.onupgradeneeded = () => r.result.createObjectStore("queue", { keyPath: "id" }); r.onsuccess = () => ok(r.result); r.onerror = () => fail(r.error); });
+const tx = async (mode, fn) => { const db = await idb(); return new Promise((ok, fail) => { const t = db.transaction("queue", mode), req = fn(t.objectStore("queue")); t.oncomplete = () => ok(req?.result); t.onerror = () => fail(t.error); }); };
+const queuePut = item => tx("readwrite", s => s.put(item));
+const queueDel = id => tx("readwrite", s => s.delete(id));
+const queueAll = () => tx("readonly", s => s.getAll());
+let sending = false;
+async function sendQueue() {
+  if (sending) return; sending = true;
+  try {
+    for (const item of await queueAll()) {
+      try { await upload(item); await queueDel(item.id); if (S.last?.id === item.id) S.view = "sent"; }
+      catch (e) { if (S.last?.id === item.id) { S.view = "notsent"; S.error = navigator.onLine ? e.message : "offline"; } break; }
+    }
+  } finally { sending = false; S.queue = await queueAll(); draw(); }
+}
+// Small files in one request; larger ones (a whole meeting) through an upload session in 3.2 MB pieces, as Graph requires.
+async function upload(item) {
+  const path = `/me/drive/root:/${INBOX.split("/").map(encodeURIComponent).join("/")}/${encodeURIComponent(item.name)}`;
+  if (item.blob.size < 4e6) return graph(`${path}:/content?@microsoft.graph.conflictBehavior=rename`, { method: "PUT", headers: { "Content-Type": "audio/mp4" }, body: item.blob });
+  const { uploadUrl } = await graph(`${path}:/createUploadSession`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ item: { "@microsoft.graph.conflictBehavior": "rename" } }) });
+  const size = item.blob.size, step = 10 * 327680;
+  for (let at = 0; at < size; at += step) {
+    const part = item.blob.slice(at, Math.min(size, at + step));
+    const res = await fetch(uploadUrl, { method: "PUT", headers: { "Content-Range": `bytes ${at}-${at + part.size - 1}/${size}` }, body: part });
+    if (!res.ok) throw new Error(`Microsoft answered ${res.status}`);
+  }
+}
+
+/* ---------- Screens ---------- */
+function draw() {
+  const app = $("#app"), pending = S.queue.filter(q => q.id !== S.last?.id || S.view === "idle");
+  const waiting = pending.length && !["recording", "sending"].includes(S.view)
+    ? `<div class="note"><strong>${pending.length === 1 ? "1 recording isn't" : `${pending.length} recordings aren't`} in OneDrive yet.</strong> ${pending.length === 1 ? "It's" : "They're"} saved on this phone. <button class="btn quiet" id="resend">Send now</button></div>` : "";
+  const err = S.error && S.view !== "notsent" ? `<div class="note fail"><strong>${esc(S.error)}</strong></div>` : "";
+
+  if (S.view === "signin") app.innerHTML = `<div class="center">
+      <h1>Nomis</h1>
+      <p class="muted" style="margin:0;max-width:32ch">Record how a meeting went. It goes to your OneDrive, and you review it in Nomis on your Mac before anything is saved.</p>
+      ${err}
+      <button class="btn primary" id="signin" style="width:100%">Sign in with Microsoft</button>
+      <p class="meta" style="margin:0">Nomis reads today's meetings and saves recordings to OneDrive/Nomis/Inbox. Nothing else.</p></div>`;
+
+  if (S.view === "idle") {
+    const m = picked();
+    app.innerHTML = `<div class="top"><h1>Today</h1><span class="meta">${esc(S.account?.username || "")}</span></div>
+      ${waiting}${err}
+      <div class="list" role="radiogroup" aria-label="Meeting to record for">
+        ${S.meetings.map((x, i) => `<button class="meeting" role="radio" aria-checked="${i === S.pick}" data-i="${i}"><span class="meta">${when(x)}</span><b>${esc(x.title)}</b></button>`).join("")}
+        <button class="meeting" role="radio" aria-checked="${S.pick === -1}" data-i="-1"><b>${NONE}</b><span class="meta">You pick who it was on your Mac</span></button>
+      </div>
+      ${S.meetings.length ? "" : `<p class="meta" style="margin:0">No meetings in your Outlook calendar today.</p>`}
+      <div class="bottom">
+        <button class="rec" id="record" aria-label="Record for ${esc(m?.title || NONE)}"><span></span></button>
+        <div class="rec-label">Record</div>
+        <p class="meta" style="margin:0;max-width:34ch">Recording someone else? Tell them first. Nothing is saved to Nomis until you review it on your Mac.</p>
+      </div>`;
+  }
+
+  if (S.view === "recording") app.innerHTML = `<div class="top"><h1><span class="dot" aria-hidden="true"></span>Recording</h1></div>
+      <div class="meeting" style="border-color:transparent"><span class="meta">For</span><b>${esc(S.rec?.meeting?.title || NONE)}</b></div>
+      <div class="bottom">
+        <div class="time" id="time" aria-live="off">${fmt(S.secs)}</div>
+        <p class="meta" style="margin:0;max-width:32ch">Who, what you learned, what you promised, what's next. Keep this screen open while you talk.</p>
+        <button class="rec stop" id="stop" aria-label="Stop and send"><span></span></button>
+        <div class="rec-label">Stop and send</div>
+      </div>`;
+
+  if (S.view === "sending") app.innerHTML = `<div class="center" aria-live="polite"><p class="muted" style="margin:0">Sending to OneDrive…</p></div>`;
+
+  if (S.view === "sent") app.innerHTML = `<div class="center" aria-live="polite">
+      <div class="check" aria-hidden="true">✓</div>
+      <h1>Sent</h1>
+      <p class="muted" style="margin:0;max-width:32ch">${esc(S.last.title)} · ${fmt(S.last.secs)}. It's in OneDrive. Nomis on your Mac picks it up the next time it's open, and you review it there.</p>
+      <button class="btn" id="again">Record another</button></div>`;
+
+  if (S.view === "notsent") app.innerHTML = `<div class="center" aria-live="polite">
+      <div class="note fail" style="text-align:left"><strong>The recording isn't in OneDrive yet.</strong>
+        ${S.error === "offline" ? "This phone is offline." : "Microsoft didn't accept the upload (" + esc(S.error) + ")."} It's saved on this phone, nothing is lost. It's sent when you tap Try again or next open this page online.</div>
+      <button class="btn primary" id="retry" style="width:100%">Try again</button>
+      <button class="btn" id="again" style="width:100%">Record another</button></div>`;
+
+  $("#signin")?.addEventListener("click", () => msalApp.loginRedirect({ scopes: SCOPES, prompt: "select_account" }));
+  $("#record")?.addEventListener("click", startRecording);
+  $("#stop")?.addEventListener("click", stopRecording);
+  $("#again")?.addEventListener("click", () => { S.view = "idle"; S.error = ""; S.pick = nearest(); draw(); });
+  $("#retry")?.addEventListener("click", () => { S.view = "sending"; draw(); sendQueue(); });
+  $("#resend")?.addEventListener("click", () => sendQueue());
+  document.querySelectorAll("[data-i]").forEach(b => b.addEventListener("click", () => { S.pick = Number(b.dataset.i); draw(); }));
+}
+
+async function boot() {
+  try { await initAuth(); } catch (e) { S.error = "Microsoft sign-in couldn't start. Check your connection and reload."; }
+  S.queue = await queueAll().catch(() => []);
+  if (!S.account) { S.view = "signin"; return draw(); }
+  S.view = "idle"; draw();
+  try { await loadMeetings(); } catch { S.error = "Couldn't load today's meetings. You can still record."; }
+  draw();
+  if (S.queue.length) sendQueue();
+}
+addEventListener("online", () => S.queue.length && sendQueue());
+addEventListener("beforeunload", e => { if (S.view === "recording") { e.preventDefault(); e.returnValue = ""; } });
+boot();
+</script>
+</body>
+</html>
